@@ -374,9 +374,17 @@ public class HashMap<K,V> extends AbstractMap<K,V>
 
     /**
      * Returns a power of two size for the given target capacity.
+     * 返回比 cap 大，且最接近 cap 的 二的某次方的数
+     * 如果 cap 恰好为二的某次方，则返回 cap
+     * 如果 二的某次方 >= MAXIMUM_CAPACITY，则返回 MAXIMUM_CAPACITY
      */
     static final int tableSizeFor(int cap) {
         int n = cap - 1;
+        /**
+         * 把 n 最高位的 1 后面的比特全部转换成 1
+         * 0000 0100 => 0000 0111
+         * 0010 1101 => 0011 1111
+         */
         n |= n >>> 1;
         n |= n >>> 2;
         n |= n >>> 4;
@@ -389,9 +397,13 @@ public class HashMap<K,V> extends AbstractMap<K,V>
 
     /**
      * The table, initialized on first use, and resized as
+     * 哈希的“表”，第一次使用时会初始化，必要时会
      * necessary. When allocated, length is always a power of two.
+     * 重置大小。每次分配大小时，“表”的长度永远是二的某次方
      * (We also tolerate length zero in some operations to allow
      * bootstrapping mechanics that are currently not needed.)
+     *
+     * table.length 实质也是经过处理后的 capacity
      */
     transient Node<K,V>[] table;
 
@@ -681,6 +693,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
         int newCap, newThr = 0;
         if (oldCap > 0) {
             if (oldCap >= MAXIMUM_CAPACITY) {
+                /**
+                 * 设置成 Integer.MAX_VALUE 之后，putVal() return 前的判断 ++size > threshold，
+                 * 将会永远不成立，这样 oldCap 就永远不会大于 MAXIMUM_CAPACITY，而 resize 操作将不会变化
+                 */
                 threshold = Integer.MAX_VALUE;
                 return oldTab;
             }
@@ -706,24 +722,56 @@ public class HashMap<K,V> extends AbstractMap<K,V>
         if (oldTab != null) {
             for (int j = 0; j < oldCap; ++j) {
                 Node<K,V> e;
+                // if 桶中有数据
                 if ((e = oldTab[j]) != null) {
                     oldTab[j] = null;
+                    // if 该位置无冲突
                     if (e.next == null)
                         newTab[e.hash & (newCap - 1)] = e;
+                    // elif 该位置有冲突，且冲突元素集合为树状结构
                     else if (e instanceof TreeNode)
                         ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                    // else 该位置有冲突，且冲突元素的集合为链表结构
                     else { // preserve order
+                        /**
+                         * 以下为拆分链表操作
+                         *
+                         * 如果把新的 table 看成由两个旧的 table 合并的成数组
+                         * 那么，索引小的称为 lo块，索引大的成为 hi块
+                         *
+                         * loHead, loTail 为 lo链表的头部和尾部，拆分后存放在 lo块中
+                         * hiHead, hiTail 为 hi链表的头部和尾部，拆分后存放在 hi块中
+                         */
                         Node<K,V> loHead = null, loTail = null;
                         Node<K,V> hiHead = null, hiTail = null;
                         Node<K,V> next;
+                        /**
+                         * do-while
+                         * 遍历旧 table 第 j 个位置的链表，把旧链表拆分成 lo链表和 hi链表
+                         */
                         do {
                             next = e.next;
+                            /**
+                             * if-else
+                             * 重新计算节点哈希值，取节点 hash 值在旧 table 的最高位[1]，判断是否为 1
+                             * 如果在：在 lo 链表尾部插入该节点
+                             * 否在：在 hi 链表尾部插入该节点
+                             *
+                             * [1] 旧 table 的最高位：
+                             * 如果旧 table 的大小为
+                             *  0001 0000
+                             *     ^
+                             * 当前节点的 hash 为
+                             *  0001 1010
+                             * 当前节点会拆分到 hi 链表中
+                             * 否则拆分到 lo 链表中
+                             */
                             if ((e.hash & oldCap) == 0) {
-                                if (loTail == null)
-                                    loHead = e;
+                                if (loTail == null) // lo链表为空时
+                                    loHead = e; // 直接插入头部
                                 else
-                                    loTail.next = e;
-                                loTail = e;
+                                    loTail.next = e; // 在尾部插入节点
+                                loTail = e; // 更新尾部指针
                             }
                             else {
                                 if (hiTail == null)
@@ -733,13 +781,15 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                                 hiTail = e;
                             }
                         } while ((e = next) != null);
+                        // if 有节点拆分到 lo链表时
                         if (loTail != null) {
-                            loTail.next = null;
-                            newTab[j] = loHead;
+                            loTail.next = null; // 断尾/删除旧链表中该节点的指针
+                            newTab[j] = loHead; // 在新的 table lo块的第 j 个位置放入 lo链表
                         }
+                        // if 有节点拆分到 hi链表时
                         if (hiTail != null) {
-                            hiTail.next = null;
-                            newTab[j + oldCap] = hiHead;
+                            hiTail.next = null; // 断尾/删除旧链表中该节点的指针
+                            newTab[j + oldCap] = hiHead; // 在新的 table hi块的第 j 个位置放入 hi链表
                         }
                     }
                 }
