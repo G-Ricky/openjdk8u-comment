@@ -49,6 +49,7 @@ import java.util.function.Consumer;
 /**
  * An optionally-bounded {@linkplain BlockingQueue blocking queue} based on
  * linked nodes.
+ * 一个基于链表的可选有界阻塞队列。
  * This queue orders elements FIFO (first-in-first-out).
  * The <em>head</em> of the queue is that element that has been on the
  * queue the longest time.
@@ -356,7 +357,10 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
         } finally {
             putLock.unlock();
         }
+        // 因为 count 是先 get 再 increment
+        // 所以 c 指入队前的元素个数
         if (c == 0)
+            // 尝试唤醒被 take(), remove() 等函数 await 的线程
             signalNotEmpty();
     }
 
@@ -448,7 +452,11 @@ public class LinkedBlockingQueue<E> extends AbstractQueue<E>
         } finally {
             takeLock.unlock();
         }
+        // 因为 count 是先 get 再 decrement
+        // 所以 c 指出队前的元素个数
         if (c == capacity)
+            // 尝试唤醒被 put 等函数 await 的线程
+            // 
             signalNotFull();
         return x;
     }

@@ -498,6 +498,8 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
              * help-out stages per call tends to minimize CAS
              * interference among helping threads.
              */
+            // 二次确认 f -> n -> b 的连接关系
+            // 如果不一致则不做任何修改
             if (f == next && this == b.next) {
                 if (f == null || f.value != f) // not already marked
                     casNext(f, new Node<K,V>(f));
@@ -670,21 +672,30 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
             throw new NullPointerException(); // don't postpone errors
         for (;;) {
             for (Index<K,V> q = head, r = q.right, d;;) {
+                // 如果没有达到最右端节点
                 if (r != null) {
                     Node<K,V> n = r.node;
                     K k = n.key;
+                    // 如果下一个 index 的节点被标记删除
                     if (n.value == null) {
+                        // 使用 cas 连接当前 index 和下下个 右index
+                        // 下个 右index 会被 gc 回收
                         if (!q.unlink(r))
+                            // 当前 index 如果已经被删除，或者 cas 失败都会 break
                             break;           // restart
+                        // 如果 unlink 成功，修正 r 指针，并重新测试 右index
                         r = q.right;         // reread r
                         continue;
                     }
+                    // 如果 key > k
                     if (cpr(cmp, key, k) > 0) {
+                        // 当前 index 和下一个 index 的指针都向右移动
                         q = r;
                         r = r.right;
                         continue;
                     }
                 }
+                // 如果遍历到了最底一层
                 if ((d = q.down) == null)
                     return q.node;
                 q = d;
@@ -820,14 +831,20 @@ public class ConcurrentSkipListMap<K,V> extends AbstractMap<K,V>
             throw new NullPointerException();
         Comparator<? super K> cmp = comparator;
         outer: for (;;) {
+            // 找前驱节点
             for (Node<K,V> b = findPredecessor(key, cmp), n = b.next;;) {
                 if (n != null) {
                     Object v; int c;
                     Node<K,V> f = n.next;
+                    // 状态发生了改变
                     if (n != b.next)               // inconsistent read
+                        // 从头再找
                         break;
+                    // 节点被标记删除
                     if ((v = n.value) == null) {   // n is deleted
+                        // b: 前驱节点 f: 后继节点
                         n.helpDelete(b, f);
+                        // 从头再找
                         break;
                     }
                     if (b.value == null || v == n) // b is deleted
