@@ -130,12 +130,29 @@ public class ReentrantLock implements Lock, java.io.Serializable {
             final Thread current = Thread.currentThread();
             int c = getState();
             if (c == 0) {
+                /*
+                 * 如果锁未被占用（c == 0），且 cas 设置成功
+                 * 则把 exclusiveOwnerThread 字段设置为当前线程，意味着当前线程成功获取独占锁
+                 *
+                 * 如果锁未被占用（c == 0），但 cas 设置失败
+                 * 说明在这瞬间被其他线程占有锁， nonfairTryAcquire 失败返回 false
+                 */
                 if (compareAndSetState(0, acquires)) {
                     setExclusiveOwnerThread(current);
                     return true;
                 }
             }
+            /*
+             * 锁被占用的情况下有可能是被当前线程占用，因此可以判断 exclusiveOwnerThread 是否等于当前线程
+             *
+             * 由于同一时间独占锁仅能被一个线程锁持有，如果 exclusiveOwnerThread 等于当前线程，那么该值一定不会改变。
+             * 如果 exclusiveOwnerThread 不等于当前线程，即使 exclusiveOwnerThread 的值发生改变变成当前线程，那么也
+             * 只是当前一次获取失败，通过自旋会在下一次即可成功获取锁？
+             * TODO 确认此时 exclusiveOwnerThread 是否不可能由其他线程变成当前线程
+             * 因此不需要 cas 防止状态改变
+             */
             else if (current == getExclusiveOwnerThread()) {
+                // 在原有的状态值的基础上加上需要获取的 acquires 数量，如果溢出，抛出 Error
                 int nextc = c + acquires;
                 if (nextc < 0) // overflow
                     throw new Error("Maximum lock count exceeded");
@@ -147,13 +164,18 @@ public class ReentrantLock implements Lock, java.io.Serializable {
 
         protected final boolean tryRelease(int releases) {
             int c = getState() - releases;
+            /*
+             * 如果 exclusiveOwnerThread 变量等于当前线程，表明当前线程一定获得了锁，否则一定没有获得锁
+             */
             if (Thread.currentThread() != getExclusiveOwnerThread())
                 throw new IllegalMonitorStateException();
             boolean free = false;
+            // 如果当前状态为 0，表示锁被释放
             if (c == 0) {
                 free = true;
                 setExclusiveOwnerThread(null);
             }
+            // 由于是当前线程获得的锁，因此不需要 cas 保证并发的正确性
             setState(c);
             return free;
         }
@@ -203,9 +225,16 @@ public class ReentrantLock implements Lock, java.io.Serializable {
          * acquire on failure.
          */
         final void lock() {
+            /*
+             * 非公平性的体现
+             * 如果 state 为 0（锁释放状态）
+             * 则立即尝试抢占锁
+             */
             if (compareAndSetState(0, 1))
+                // 抢占成功
                 setExclusiveOwnerThread(Thread.currentThread());
             else
+                // 抢占失败
                 acquire(1);
         }
 

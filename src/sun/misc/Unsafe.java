@@ -994,6 +994,16 @@ public final class Unsafe {
      * "reason"). Note: This operation is in the Unsafe class only
      * because <tt>unpark</tt> is, so it would be strange to place it
      * elsewhere.
+     *
+     * 以下情况下，被 park 函数阻塞的线程将会被恢复，并返回 park 函数
+     * 1. a balancing unpark occurs TODO 翻译
+     * 2. a balancing unpark has already occurred TODO 翻译
+     * 3. 线程被中断（interrupted）
+     * 4. 过期时间为相对时间（isAbsolute == false），初始设置的过期时间不为 0 的情况下，当前已经到达过期时间
+     * 5. 过期时间为绝对时间，且当前时间已到过期时间 TODO 绝对时间的定义
+     * 6. spuriously （???） TODO 翻译
+     * @param isAbsolute 是绝对时间（true）还是相对时间（false）
+     * @param time TODO time 的实际含义
      */
     public native void park(boolean isAbsolute, long time);
 

@@ -69,6 +69,18 @@ public abstract class AbstractOwnableSynchronizer
      * This method does not otherwise impose any synchronization or
      * {@code volatile} field accesses.
      * @param thread the owner thread
+     *
+     * 设置当前占有锁的线程，jdk 保证了只有在线程在获得锁的情况下才进行 setExclusiveOwnerThread
+     * 的操作，因此如果 getExclusiveOwnerThread() == Thread.currentThread()，表明当前线程一定获得了锁
+     * 详细参考 AQS 中调用此方法的函数 {@link java.util.concurrent.locks.ReentrantLock.Sync#nonfairTryAcquire}，
+     * {@link ReentrantLock.NonfairSync#lock()}，{@link ReentrantLock.FairSync#tryAcquire(int)}
+     * 因此 {@link ReentrantLock.Sync#tryRelease(int)} 调用 setExclusiveOwnerThread(null) 时，也是持有锁状态的。
+     *
+     * 由于 exclusiveOwnerThread 获取锁成功 {@link ReentrantLock.NonfairSync#lock() compareAndSetState(0, acquires)}
+     * 后才能被设置为当前线程，在释放锁 {@link ReentrantLock.Sync#tryRelease(int) setState(c)} 之前被设置成 null
+     * 可以得出如下推论
+     * 如果 exclusiveOwnerThread 不为 null，一定有线程持有锁
+     * 如果 exclusiveOwnerThread 为 null，可能有线程持有锁，也有可能没有线程持有锁
      */
     protected final void setExclusiveOwnerThread(Thread thread) {
         exclusiveOwnerThread = thread;

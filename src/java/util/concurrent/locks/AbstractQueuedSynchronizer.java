@@ -385,6 +385,7 @@ public abstract class AbstractQueuedSynchronizer
 
         /** waitStatus value to indicate thread has cancelled */
         static final int CANCELLED =  1;
+        // 标记后继节点的线程是否需要 unpark
         /** waitStatus value to indicate successor's thread needs unparking */
         static final int SIGNAL    = -1;
         /** waitStatus value to indicate thread is waiting on condition */
@@ -536,6 +537,8 @@ public abstract class AbstractQueuedSynchronizer
      * Returns the current value of synchronization state.
      * This operation has memory semantics of a {@code volatile} read.
      * @return current state value
+     *
+     * 锁状态， 0 表示锁未被占用，大于 0 表示锁已被占用
      */
     protected final int getState() {
         return state;
@@ -584,9 +587,11 @@ public abstract class AbstractQueuedSynchronizer
         for (;;) {
             Node t = tail;
             if (t == null) { // Must initialize
+                // 初始化等待队列的头部和尾部
                 if (compareAndSetHead(new Node()))
                     tail = head;
             } else {
+                // 插入尾部
                 node.prev = t;
                 if (compareAndSetTail(t, node)) {
                     t.next = node;
@@ -603,7 +608,9 @@ public abstract class AbstractQueuedSynchronizer
      * @return the new node
      */
     private Node addWaiter(Node mode) {
+        // 创建等待节点
         Node node = new Node(Thread.currentThread(), mode);
+        // 先直接尝试插入等待队列尾部
         // Try the fast path of enq; backup to full enq on failure
         Node pred = tail;
         if (pred != null) {
@@ -613,6 +620,7 @@ public abstract class AbstractQueuedSynchronizer
                 return node;
             }
         }
+        // 通过自旋插入等待队列尾部
         enq(node);
         return node;
     }
@@ -800,6 +808,10 @@ public abstract class AbstractQueuedSynchronizer
              * to signal it, so it can safely park.
              */
             return true;
+
+        /**
+         * 前驱节点的 waitStatus 为 {@link AbstractQueuedSynchronizer.Node.CANCELLED}
+         */
         if (ws > 0) {
             /*
              * Predecessor was cancelled. Skip over predecessors and
@@ -831,6 +843,10 @@ public abstract class AbstractQueuedSynchronizer
      * Convenience method to park and then check if interrupted
      *
      * @return {@code true} if interrupted
+     *
+     * 通过 park 阻塞当前线程
+     * 如果当前线程是因为被中断的而重新运行的，则函数返回 true ，并清除中断标志
+     * 如果是其他情况 {@link sun.misc.Unsafe#park(boolean, long)} 导致 park 返回的则函数返回 false
      */
     private final boolean parkAndCheckInterrupt() {
         LockSupport.park(this);
@@ -859,6 +875,7 @@ public abstract class AbstractQueuedSynchronizer
         try {
             boolean interrupted = false;
             for (;;) {
+                // 当前节点的前驱结点
                 final Node p = node.predecessor();
                 if (p == head && tryAcquire(arg)) {
                     setHead(node);
@@ -866,17 +883,34 @@ public abstract class AbstractQueuedSynchronizer
                     failed = false;
                     return interrupted;
                 }
+                /*
+                 * 1. shouldParkAfterFailedAcquire(p, node)
+                 * 判断获取锁失败后是否应该阻塞当前线程
+                 * 如果需要阻塞当前线程，则返回 true，并执行第 2 步骤
+                 *   TODO 什么情况下需要阻塞当前线程
+                 * 如果不需要则什么也不做，继续死循环判断是否能获取锁
+                 * 2. parkAndCheckInterrupt()
+                 * 阻塞当前线程，如果阻塞状态被取消，则返回是否是因为中断（interrupt）导致的返回
+                 * 如果是因为中断而返回的，则本地变量 interrupted 会被设置为 true，并继续死循环判断是否能获取锁
+                 * 否则什么也不做，继续死循环判断是否能获取锁
+                 */
                 if (shouldParkAfterFailedAcquire(p, node) &&
                     parkAndCheckInterrupt())
                     interrupted = true;
             }
         } finally {
+            // TODO 什么情况下 failed 会为 true
             if (failed)
                 cancelAcquire(node);
         }
     }
 
     /**
+     * 相当于不可中断获取锁的步骤 acquireQueued(addWaiter(Node.EXCLUSIVE), arg)
+     * 合并成了一个方法
+     * acquireQueued 中检测到中断仅仅把本地变量 interrupted 设置成 true，并返回
+     * doAcquireInterruptibly 中检测到中断后立即抛出中断异常
+     *
      * Acquires in exclusive interruptible mode.
      * @param arg the acquire argument
      */
@@ -1195,6 +1229,19 @@ public abstract class AbstractQueuedSynchronizer
      *        can represent anything you like.
      */
     public final void acquire(int arg) {
+        /*
+         * 1. tryAcquire(arg) 尝试抢占锁
+         * 如果抢占成功 tryAcquire 返回 true，acquire 函数直接返回（条件判断终止）
+         * 否则返回 false，继续进行步骤 2
+         * 2. addWaiter(Node.EXCLUSIVE) 添加独占标记的节点到等待队列
+         * 如果队列未初始化先初始化，然后再从队列尾部加入节点，通过 cas 保证同步
+         * 3. acquireQueued(...)
+         * 死循环判断前驱节点是否是队列头，并尝试获取锁直到获取成功。
+         * 在获取锁的过程中不处理中断标志、不中断线程，但只要在死循环中接收过中断标记，都会返回 true。
+         * 相反，如果没有接收过任何中断标记，则返回 false
+         * 4. selfInterrupt()
+         * 中断自身线程（设置中断标志）
+         */
         if (!tryAcquire(arg) &&
             acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
             selfInterrupt();
@@ -1216,8 +1263,10 @@ public abstract class AbstractQueuedSynchronizer
      */
     public final void acquireInterruptibly(int arg)
             throws InterruptedException {
+        // 如果在获取锁之前线程就有未处理的中断标记，则直接抛出中断异常
         if (Thread.interrupted())
             throw new InterruptedException();
+        // 如果第一次尝试获取锁失败，则进入死循环获取锁
         if (!tryAcquire(arg))
             doAcquireInterruptibly(arg);
     }
@@ -1261,6 +1310,7 @@ public abstract class AbstractQueuedSynchronizer
         if (tryRelease(arg)) {
             Node h = head;
             if (h != null && h.waitStatus != 0)
+                // TODO 唤醒后继节点？
                 unparkSuccessor(h);
             return true;
         }
